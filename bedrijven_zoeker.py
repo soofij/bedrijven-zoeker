@@ -1,18 +1,30 @@
+import streamlit as st
 import requests
 import pandas as pd
 import time
 from bs4 import BeautifulSoup
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
+import io
 
-API_KEY = "1d02aff99134b687a088bd877d4c43d63962253b"
+st.set_page_config(page_title="Bedrijven Zoeker", page_icon="🔍")
+st.title("Bedrijven Zoeker")
+st.write("Zoek bedrijven op thema en regio en download de resultaten als Excel.")
 
-steden = ["Arnhem", "Apeldoorn", "Zutphen", "Deventer", "Doetinchem"]
-zoektermen = ["duurzaamheid", "circulariteit", "advies energietransitie", "circulair", "warmtetransitie", "procesadvies duurzaamheid", "klimaatadvies", "gebiedsinnovatie"]
+api_key = st.text_input("Serper API key", type="password")
+steden_input = st.text_input("Steden (kommagescheiden)", "Arnhem, Apeldoorn, Zutphen, Deventer, Doetinchem")
+zoektermen_input = st.text_input("Zoektermen (kommagescheiden)", "duurzaamheid, circulariteit, warmtetransitie, klimaatadvies")
+max_resultaten = st.slider("Max resultaten per zoekopdracht", 5, 50, 10)
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+filter_urls = [
+    ".nl/gemeente", "gemeente.nl", "provincie.nl",
+    "klimaatbeheersing", "klimaattechniek", "installatie",
+    "bouwbedrijf", "acel.nl", "despaan.nl", "ktd-", "kso-",
+    "bergevoet.nl", "oude-ijsselstreek.nl", "/gebruikte-bouwmaterialen",
+    "/voorbeelden-van-", "/duurzame-ondernemers",
+    "arnhem.nl/alle-onderwerpen", "deventer.nl/", "apeldoorn.nl/",
+    "zutphen.nl/", "doetinchem.nl/", "gelderland.nl/"
+]
 
 filter_woorden = [
     "wat wij doen", "home", "nieuws", "over ons", "contact",
@@ -21,23 +33,16 @@ filter_woorden = [
     "wikipedia", "linkedin.com/posts", "youtube", "facebook"
 ]
 
-filter_urls = [
-    ".nl/gemeente", "gemeente.nl", "provincie.nl",
-    "klimaatbeheersing", "klimaattechniek", "installatie",
-    "bouwbedrijf", "acel.nl", "despaan.nl", "ktd-", "kso-",
-    "bergevoet.nl", "oude-ijsselstreek.nl", "/gebruikte-bouwmaterialen",
-    "/voorbeelden-van-", "/duurzame-ondernemers",
-    "arnhem.nl/alle-onderwerpen", "arnhem.nl/",
-    "deventer.nl/", "apeldoorn.nl/", "zutphen.nl/",
-    "doetinchem.nl/", "gelderland.nl/"
-]
-
 filter_titels = [
     "installatie", "klimaattechniek", "klimaatbeheersing",
     "bouwbedrijf", "gemeente", "provincie", "techniek b.v",
     "loodgieter", "elektricien", "aannemer",
     "gebruikte bouwmaterialen", "voorbeelden van"
 ]
+
+headers = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
 
 def is_geen_bedrijf(titel, link):
     titel_lower = titel.lower()
@@ -92,19 +97,14 @@ def haal_omschrijving_op(url):
     except:
         return ""
 
-def zoek_bedrijven(zoekterm, stad):
+def zoek_bedrijven(zoekterm, stad, api_key, max_resultaten):
     query = f"{zoekterm} bedrijf {stad}"
     url = "https://google.serper.dev/search"
     headers_api = {
-        "X-API-KEY": API_KEY,
+        "X-API-KEY": api_key,
         "Content-Type": "application/json"
     }
-    payload = {
-        "q": query,
-        "hl": "nl",
-        "gl": "nl",
-        "num": 10
-    }
+    payload = {"q": query, "hl": "nl", "gl": "nl", "num": max_resultaten}
     try:
         response = requests.post(url, headers=headers_api, json=payload, timeout=10)
         data = response.json()
@@ -126,61 +126,80 @@ def zoek_bedrijven(zoekterm, stad):
                 })
         return resultaten
     except Exception as e:
-        print(f"Fout bij '{query}': {e}")
         return []
 
-alle_resultaten = []
+if st.button("Zoeken en Excel downloaden"):
+    if not api_key:
+        st.error("Vul je Serper API key in!")
+    else:
+        steden = [s.strip() for s in steden_input.split(",")]
+        zoektermen = [z.strip() for z in zoektermen_input.split(",")]
+        alle_resultaten = []
+        totaal = len(steden) * len(zoektermen)
+        voortgang = st.progress(0)
+        status = st.empty()
+        stap = 0
 
-for stad in steden:
-    for zoekterm in zoektermen:
-        print(f"Zoeken: {zoekterm} in {stad}...")
-        resultaten = zoek_bedrijven(zoekterm, stad)
-        print(f"  {len(resultaten)} resultaten gevonden")
-        alle_resultaten.extend(resultaten)
-        time.sleep(1)
+        for stad in steden:
+            for zoekterm in zoektermen:
+                status.text(f"Zoeken: {zoekterm} in {stad}...")
+                resultaten = zoek_bedrijven(zoekterm, stad, api_key, max_resultaten)
+                alle_resultaten.extend(resultaten)
+                stap += 1
+                voortgang.progress(stap / totaal)
+                time.sleep(1)
 
-df = pd.DataFrame(alle_resultaten)
-df = df.drop_duplicates(subset=["Website"])
-df = df.reset_index(drop=True)
+        df = pd.DataFrame(alle_resultaten)
+        df = df.drop_duplicates(subset=["Website"])
+        df = df.reset_index(drop=True)
 
-bestandsnaam = "bedrijven_resultaten.xlsx"
-df.to_excel(bestandsnaam, index=False)
+        output = io.BytesIO()
+        df.to_excel(output, index=False)
+        output.seek(0)
 
-wb = load_workbook(bestandsnaam)
-ws = wb.active
+        wb = load_workbook(output)
+        ws = wb.active
 
-# Klikbare links
-for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-    cel = row[1]
-    if cel.value and str(cel.value).startswith("http"):
-        cel.hyperlink = cel.value
-        cel.font = Font(color="0000FF", underline="single")
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            cel = row[1]
+            if cel.value and str(cel.value).startswith("http"):
+                cel.hyperlink = cel.value
+                cel.font = Font(color="0000FF", underline="single")
 
-# Kopteksten
-header_fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
-header_font = Font(bold=True, color="FFFFFF", size=11)
-for cel in ws[1]:
-    cel.fill = header_fill
-    cel.font = header_font
-    cel.alignment = Alignment(horizontal="center", vertical="center")
-ws.row_dimensions[1].height = 25
+        header_fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        for cel in ws[1]:
+            cel.fill = header_fill
+            cel.font = header_font
+            cel.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 25
 
-# Rijen opmaak
-lichtgrijs = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
-wit = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-for i, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row), start=2):
-    for cel in row:
-        cel.fill = lichtgrijs if i % 2 == 0 else wit
-        cel.alignment = Alignment(vertical="center", wrap_text=False)
-    ws.row_dimensions[i].height = 18
+        lichtgrijs = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
+        wit = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+        for i, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row), start=2):
+            for cel in row:
+                cel.fill = lichtgrijs if i % 2 == 0 else wit
+                cel.alignment = Alignment(vertical="center", wrap_text=False)
+            ws.row_dimensions[i].height = 18
 
-# Kolombreedte
-for column in ws.columns:
-    max_breedte = 0
-    for cel in column:
-        if cel.value:
-            max_breedte = max(max_breedte, len(str(cel.value)))
-    ws.column_dimensions[column[0].column_letter].width = min(max_breedte + 2, 50)
+        for column in ws.columns:
+            max_breedte = 0
+            for cel in column:
+                if cel.value:
+                    max_breedte = max(max_breedte, len(str(cel.value)))
+            ws.column_dimensions[column[0].column_letter].width = min(max_breedte + 2, 50)
 
-wb.save(bestandsnaam)
-print(f"Klaar! {len(df)} bedrijven opgeslagen in '{bestandsnaam}'")
+        final_output = io.BytesIO()
+        wb.save(final_output)
+        final_output.seek(0)
+
+        status.text(f"Klaar! {len(df)} bedrijven gevonden.")
+        voortgang.progress(1.0)
+
+        st.success(f"{len(df)} bedrijven gevonden!")
+        st.download_button(
+            label="Download Excel",
+            data=final_output,
+            file_name="bedrijven_resultaten.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
