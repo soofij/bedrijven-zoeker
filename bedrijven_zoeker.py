@@ -128,7 +128,7 @@ def zoek_bedrijven(zoekterm, stad, api_key, max_resultaten):
     except Exception as e:
         return []
 
-if st.button("Zoeken en Excel downloaden"):
+if st.button("Zoeken"):
     if not api_key:
         st.error("Vul je Serper API key in!")
     else:
@@ -153,53 +153,15 @@ if st.button("Zoeken en Excel downloaden"):
         df = df.drop_duplicates(subset=["Website"])
         df = df.reset_index(drop=True)
 
-        output = io.BytesIO()
-        df.to_excel(output, index=False)
-        output.seek(0)
-
-        wb = load_workbook(output)
-        ws = wb.active
-
-        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-            cel = row[1]
-            if cel.value and str(cel.value).startswith("http"):
-                cel.hyperlink = cel.value
-                cel.font = Font(color="0000FF", underline="single")
-
-        header_fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF", size=11)
-        for cel in ws[1]:
-            cel.fill = header_fill
-            cel.font = header_font
-            cel.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[1].height = 25
-
-        lichtgrijs = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
-        wit = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-        for i, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row), start=2):
-            for cel in row:
-                cel.fill = lichtgrijs if i % 2 == 0 else wit
-                cel.alignment = Alignment(vertical="center", wrap_text=False)
-            ws.row_dimensions[i].height = 18
-
-        for column in ws.columns:
-            max_breedte = 0
-            for cel in column:
-                if cel.value:
-                    max_breedte = max(max_breedte, len(str(cel.value)))
-            ws.column_dimensions[column[0].column_letter].width = min(max_breedte + 2, 50)
-
-        final_output = io.BytesIO()
-        wb.save(final_output)
-        final_output.seek(0)
-
         status.text(f"Klaar! {len(df)} bedrijven gevonden.")
         voortgang.progress(1.0)
 
         st.success(f"{len(df)} bedrijven gevonden!")
-        st.download_button(
-            label="Download Excel",
-            data=final_output,
-            file_name="bedrijven_resultaten.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        st.dataframe(
+            df[["Bedrijfsnaam", "Website", "Omschrijving", "Stad"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Website": st.column_config.LinkColumn("Website")
+            }
         )
